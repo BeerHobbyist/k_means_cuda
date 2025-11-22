@@ -1,0 +1,134 @@
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+#include <cstdio>
+#include <cfloat>
+#include <algorithm>
+#include <vector>
+#include <random>
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <cstring>
+
+inline void __checkCudaErrors(cudaError_t result, const char* func, const char* file, int line) {
+  if (result != cudaSuccess) {
+    std::fprintf(stderr, "CUDA Runtime Error at %s:%d: %s: %s\n",
+                 file, line, func, cudaGetErrorString(result));
+    std::exit(1);
+  }
+}
+#define checkCudaErrors(val) __checkCudaErrors((val), #val, __FILE__, __LINE__)
+
+struct Options {
+  std::string inputFile;
+  int K = -1;
+  float threshold = 0.001f; // stop when changed_memberships / N <= threshold
+};
+
+static bool parseArgs(int argc, char** argv, Options& opts) {
+  for (int a = 1; a < argc; ++a) {
+    if (std::strcmp(argv[a], "-i") == 0 && a + 1 < argc) {
+      opts.inputFile = argv[++a];
+    } else if (std::strcmp(argv[a], "-n") == 0 && a + 1 < argc) {
+      opts.K = std::atoi(argv[++a]);
+    } else if (std::strcmp(argv[a], "-t") == 0 && a + 1 < argc) {
+      opts.threshold = std::atof(argv[++a]);
+    } else {
+      std::cerr << "Unknown arg: " << argv[a] << "\n";
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool loadAsciiPoints(const std::string& path, std::vector<float>& points, int& N, int& D) {
+  std::ifstream in(path);
+  if (!in) return false;
+  std::string line;
+  std::vector<float> data;
+  int dim = -1;
+  int count = 0;
+  while (std::getline(in, line)) {
+    if (line.empty()) continue;
+    std::istringstream iss(line);
+    int id;
+    if (!(iss >> id)) continue;
+    std::vector<float> coords;
+    float v;
+    while (iss >> v) coords.push_back(v);
+    if (coords.empty()) continue;
+    if (dim == -1) dim = static_cast<int>(coords.size());
+    if (static_cast<int>(coords.size()) != dim) {
+      std::cerr << "Inconsistent dimensionality in ASCII input\n";
+      return false;
+    }
+    data.insert(data.end(), coords.begin(), coords.end());
+    ++count;
+  }
+  if (dim <= 0 || count <= 0) return false;
+  points.swap(data);
+  N = count;
+  D = dim;
+  return true;
+}
+
+// Wrapper function implemented in atiomic_k_means.cu
+void run_atomic_kmeans(const std::vector<float>& h_points,
+                       int N, int D, int K,
+                       float threshold, int maxIters,
+                       std::vector<float>& h_centroids);
+
+int main(int argc, char** argv) {
+  Options opts;
+  if (!parseArgs(argc, argv, opts)) return 1;
+
+  // Defaults if no input file is provided
+  int N = 10000;  // number of points
+  int D = 2;      // dimension
+  int K = opts.K > 1 ? opts.K : 3; // clusters
+  const float threshold = (opts.threshold >= 0.0f) ? opts.threshold : 0.001f;
+  const int maxIters = 1000; // safety cap
+
+  std::vector<float> h_points;
+  if (!opts.inputFile.empty()) {
+    bool ok = loadAsciiPoints(opts.inputFile, h_points, N, D);
+    if (!ok) {
+      std::cerr << "Failed to load ASCII input file: " << opts.inputFile << "\n";
+      return 1;
+    }
+  } else {
+    // Host: generate random points in [0, 1)
+    h_points.resize(static_cast<size_t>(N) * D);
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
+    for (int i = 0; i < N * D; ++i) h_points[i] = dist01(rng);
+  }
+  if (K <= 1 || K > N) {
+    std::cerr << "Invalid K: " << K << " for N=" << N << "\n";
+    return 1;
+  }
+
+  // Host: initialize centroids as random points from the input
+  std::vector<float> h_centroids(K * D);
+  for (int k = 0; k < K; ++k) {
+    for (int d = 0; d < D; ++d) {
+        int index = rand() % N;
+      h_centroids[k * D + d] = h_points[index * D + d];
+    }
+  }
+
+  run_atomic_kmeans(h_points, N, D, K, threshold, maxIters, h_centroids);
+
+  std::cout << "Final centroids (K=" << K << ", D=" << D << "):\n";
+  for (int k = 0; k < K; ++k) {
+    std::cout << "  c" << k << ":";
+    for (int d = 0; d < D; ++d) {
+      std::cout << " " << h_centroids[k * D + d];
+    }
+    std::cout << "\n";
+  }
+  
+  return 0;
+}
+
