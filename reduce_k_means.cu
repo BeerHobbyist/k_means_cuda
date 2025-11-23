@@ -23,6 +23,32 @@ __global__ void assign_points_to_centroids(const float* __restrict__ points,
   }
 }
 
+__global__ void compute_partial_sums(const float* __restrict__ points,
+                                     const int* __restrict__ assignments,
+                                     float* __restrict__ sums,
+                                     int numPoints, int numCentroids, int dim) {
+  int blockStart = (blockIdx.x * numPoints) / gridDim.x;
+  int blockEnd   = ((blockIdx.x + 1) * numPoints) / gridDim.x;
+  int tStart = blockStart + (threadIdx.x * (blockEnd - blockStart)) / blockDim.x;
+  int tEnd   = blockStart + ((threadIdx.x + 1) * (blockEnd - blockStart)) / blockDim.x;
+
+  int threadLinear = blockIdx.x * blockDim.x + threadIdx.x;
+  int tileBase = threadLinear * numCentroids * dim;
+
+  for (int t = 0; t < numCentroids * dim; ++t) {
+    sums[tileBase + t] = 0.0f;
+  }
+
+  for (int i = tStart; i < tEnd; ++i) {
+    int best = assignments[i];
+    int pointBase = i * dim;
+    int centroidBase = tileBase + best * dim;
+    for (int d = 0; d < dim; ++d) {
+      sums[centroidBase + d] += points[pointBase + d];
+    }
+  }
+}
+
 void run_reduce_kmeans(const std::vector<float>& h_points,
                        int N, int D, int K,
                        float threshold, int maxIters,
@@ -38,7 +64,6 @@ void run_reduce_kmeans(const std::vector<float>& h_points,
 
     checkCudaErrors(cudaMalloc(&d_points, static_cast<size_t>(N) * D * sizeof(float)));
     checkCudaErrors(cudaMalloc(&d_centroids, static_cast<size_t>(K) * D * sizeof(float)));
-    checkCudaErrors(cudaMalloc(&d_sums, static_cast<size_t>(K) * D * sizeof(float)));
     checkCudaErrors(cudaMalloc(&d_counts, static_cast<size_t>(K) * sizeof(int)));
     checkCudaErrors(cudaMalloc(&d_assign, static_cast<size_t>(N) * sizeof(int)));
     checkCudaErrors(cudaMalloc(&d_prev_assign, static_cast<size_t>(N) * sizeof(int)));
@@ -58,7 +83,19 @@ void run_reduce_kmeans(const std::vector<float>& h_points,
     cudaDeviceProp prop{};
     checkCudaErrors(cudaGetDeviceProperties(&prop, 0));
 
+    std::cout << "Block size: " << blockSize << std::endl;
+
     assign_points_to_centroids<<<grid, block>>>(d_points, d_centroids, d_assign, N, K, D);
+    checkCudaErrors(cudaGetLastError());
+    checkCudaErrors(cudaDeviceSynchronize());
+    // Allocate per-thread tiles: gridSize * blockSize * K * D
+    {
+      size_t tiles = static_cast<size_t>(gridSize) * static_cast<size_t>(blockSize);
+      size_t sumsElems = tiles * static_cast<size_t>(K) * static_cast<size_t>(D);
+      checkCudaErrors(cudaMalloc(&d_sums, sumsElems * sizeof(float)));
+    }
+    // Compute per-thread partial sums
+    compute_partial_sums<<<grid, block>>>(d_points, d_assign, d_sums, N, K, D);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
     std::vector<int> h_assignments(N);
@@ -71,6 +108,7 @@ void run_reduce_kmeans(const std::vector<float>& h_points,
 
     cudaFree(d_points);
     cudaFree(d_centroids);
+    cudaFree(d_sums);
     cudaFree(d_assign);
     cudaFree(d_prev_assign);
 }
