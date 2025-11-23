@@ -1,19 +1,12 @@
 #include "cuda_runtime.h"
+#include "helpers.cuh"
 #include "device_launch_parameters.h"
 #include <cstdio>
 #include <cfloat>
+#include <iostream>
 #include <algorithm>
 #include <vector>
 #include <cstring>
-
-inline void __checkCudaErrors(cudaError_t result, const char* func, const char* file, int line) {
-  if (result != cudaSuccess) {
-    std::fprintf(stderr, "CUDA Runtime Error at %s:%d: %s: %s\n",
-                 file, line, func, cudaGetErrorString(result));
-    std::exit(1);
-  }
-}
-#define checkCudaErrors(val) __checkCudaErrors((val), #val, __FILE__, __LINE__)
 
 __global__ void assign_and_accumulate(const float* __restrict__ points,
                                       const float* __restrict__ centroids,
@@ -27,24 +20,9 @@ __global__ void assign_and_accumulate(const float* __restrict__ points,
        i < numPoints;
        i += blockDim.x * gridDim.x) {
 
-    int best = 0;
-    float bestDist = FLT_MAX;
-
-    for (int k = 0; k < numCentroids; ++k) {
-      float dist = 0.0f;
-      int baseP = i * dim;
-      int baseC = k * dim;
-
-      for (int d = 0; d < dim; ++d) {
-        float diff = points[baseP + d] - centroids[baseC + d];
-        dist += diff * diff;
-      }
-
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = k;
-      }
-    }
+    int best = get_best_centroid_index(points, centroids, numCentroids, dim, i);
+    int baseP = i * dim;
+    int baseS = best * dim;
 
     assignments[i] = best;
     if (prevAssignments) {
@@ -55,8 +33,6 @@ __global__ void assign_and_accumulate(const float* __restrict__ points,
     }
 
     atomicAdd(&counts[best], 1);
-    int baseP = i * dim;
-    int baseS = best * dim;
     for (int d = 0; d < dim; ++d) {
       atomicAdd(&sums[baseS + d], points[baseP + d]);
     }
@@ -88,7 +64,6 @@ void run_atomic_kmeans(const std::vector<float>& h_points,
   int* d_counts = nullptr;
   int* d_assign = nullptr;
   int* d_prev_assign = nullptr;
-  int* h_changed = nullptr;
   int* d_changed = nullptr;
 
   checkCudaErrors(cudaMalloc(&d_points, static_cast<size_t>(N) * D * sizeof(float)));
@@ -97,8 +72,7 @@ void run_atomic_kmeans(const std::vector<float>& h_points,
   checkCudaErrors(cudaMalloc(&d_counts, static_cast<size_t>(K) * sizeof(int)));
   checkCudaErrors(cudaMalloc(&d_assign, static_cast<size_t>(N) * sizeof(int)));
   checkCudaErrors(cudaMalloc(&d_prev_assign, static_cast<size_t>(N) * sizeof(int)));
-  checkCudaErrors(cudaHostAlloc(reinterpret_cast<void**>(&h_changed), sizeof(int), cudaHostAllocMapped));
-  checkCudaErrors(cudaHostGetDevicePointer(reinterpret_cast<void**>(&d_changed), h_changed, 0));
+  checkCudaErrors(cudaMalloc(&d_changed, sizeof(int)));
 
   checkCudaErrors(cudaMemcpy(d_points, h_points.data(), static_cast<size_t>(N) * D * sizeof(float), cudaMemcpyHostToDevice));
   checkCudaErrors(cudaMemcpy(d_centroids, h_centroids.data(), static_cast<size_t>(K) * D * sizeof(float), cudaMemcpyHostToDevice));
@@ -122,7 +96,7 @@ void run_atomic_kmeans(const std::vector<float>& h_points,
   while (true) {
     checkCudaErrors(cudaMemset(d_sums, 0, static_cast<size_t>(K) * D * sizeof(float)));
     checkCudaErrors(cudaMemset(d_counts, 0, static_cast<size_t>(K) * sizeof(int)));
-    *h_changed = 0;
+    checkCudaErrors(cudaMemset(d_changed, 0, sizeof(int)));
 
     assign_and_accumulate<<<grid, block>>>(d_points, d_centroids, d_assign, d_sums, d_counts, d_prev_assign, d_changed, N, K, D);
     checkCudaErrors(cudaGetLastError());
@@ -131,7 +105,7 @@ void run_atomic_kmeans(const std::vector<float>& h_points,
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
 
-    hostChanged = *h_changed;
+    checkCudaErrors(cudaMemcpy(&hostChanged, d_changed, sizeof(int), cudaMemcpyDeviceToHost));
     float changeRatio = static_cast<float>(hostChanged) / static_cast<float>(N);
     ++it;
     if (changeRatio <= threshold || it >= maxIters) {
@@ -140,8 +114,14 @@ void run_atomic_kmeans(const std::vector<float>& h_points,
 
     std::swap(d_assign, d_prev_assign);
   }
+  std::vector<int> h_assignments(N);
 
   checkCudaErrors(cudaMemcpy(h_centroids.data(), d_centroids, static_cast<size_t>(K) * D * sizeof(float), cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(h_assignments.data(), d_assign, static_cast<size_t>(N) * sizeof(int), cudaMemcpyDeviceToHost));
+  for (int i = 0; i < N; ++i) {
+    std::cout << "Assignments[" << i << "] = " << h_assignments[i] << " ";
+  }
+  std::cout << std::endl;
 
   cudaFree(d_points);
   cudaFree(d_centroids);
@@ -149,7 +129,7 @@ void run_atomic_kmeans(const std::vector<float>& h_points,
   cudaFree(d_counts);
   cudaFree(d_assign);
   cudaFree(d_prev_assign);
-  cudaFreeHost(h_changed);
+  cudaFree(d_changed);
 }
 
 

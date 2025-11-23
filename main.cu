@@ -1,5 +1,6 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include "kmeans.h"
 #include <cstdio>
 #include <cfloat>
 #include <algorithm>
@@ -10,15 +11,6 @@
 #include <sstream>
 #include <string>
 #include <cstring>
-
-inline void __checkCudaErrors(cudaError_t result, const char* func, const char* file, int line) {
-  if (result != cudaSuccess) {
-    std::fprintf(stderr, "CUDA Runtime Error at %s:%d: %s: %s\n",
-                 file, line, func, cudaGetErrorString(result));
-    std::exit(1);
-  }
-}
-#define checkCudaErrors(val) __checkCudaErrors((val), #val, __FILE__, __LINE__)
 
 struct Options {
   std::string inputFile;
@@ -73,12 +65,6 @@ static bool loadAsciiPoints(const std::string& path, std::vector<float>& points,
   return true;
 }
 
-// Wrapper function implemented in atiomic_k_means.cu
-void run_atomic_kmeans(const std::vector<float>& h_points,
-                       int N, int D, int K,
-                       float threshold, int maxIters,
-                       std::vector<float>& h_centroids);
-
 int main(int argc, char** argv) {
   Options opts;
   if (!parseArgs(argc, argv, opts)) return 1;
@@ -109,17 +95,16 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Host: initialize centroids as random points from the input
   std::vector<float> h_centroids(K * D);
   for (int k = 0; k < K; ++k) {
     for (int d = 0; d < D; ++d) {
-        int index = rand() % N;
-      h_centroids[k * D + d] = h_points[index * D + d];
+      h_centroids[k * D + d] = h_points[k * D + d];
     }
   }
 
   run_atomic_kmeans(h_points, N, D, K, threshold, maxIters, h_centroids);
 
+  // run_reduce_kmeans(h_points, N, D, K, threshold, maxIters, h_centroids);
   std::cout << "Final centroids (K=" << K << ", D=" << D << "):\n";
   for (int k = 0; k < K; ++k) {
     std::cout << "  c" << k << ":";
