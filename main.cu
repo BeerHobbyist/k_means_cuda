@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <cstring>
+#include <chrono>
 
 struct Options {
   std::string inputFile;
@@ -80,6 +81,10 @@ int main(int argc, char** argv) {
   Options opts;
   if (!parseArgs(argc, argv, opts)) return 1;
 
+  using Clock = std::chrono::high_resolution_clock;
+  double pre_loop_ms = 0.0;
+  Clock::time_point t0, t1;
+
   // Defaults if no input file is provided
   int N = 10000;  // number of points
   int D = 2;      // dimension
@@ -90,6 +95,7 @@ int main(int argc, char** argv) {
   std::vector<float> h_points;
 
   if (!opts.inputFile.empty()) {
+    t0 = Clock::now();
     bool ok = loadAsciiPoints(opts.inputFile, h_points, N, D);
     if (!ok) {
       std::cerr << "Failed to load ASCII input file: " << opts.inputFile << "\n";
@@ -97,7 +103,7 @@ int main(int argc, char** argv) {
       return 1;
     }
   } else {
-    cout << "No input file provided, returning 1" << endl;
+    std::cout << "No input file provided, returning 1" << std::endl;
     return 1;
   }
 
@@ -112,6 +118,8 @@ int main(int argc, char** argv) {
       h_centroids[k * D + d] = h_points[k * D + d];
     }
   }
+  t1 = Clock::now();
+  pre_loop_ms = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0;
 
   run_atomic_kmeans(h_points, N, D, K, threshold, maxIters, h_centroids);
 
@@ -123,6 +131,7 @@ int main(int argc, char** argv) {
     }
     std::cout << "\n";
   }
+  std::cout << "Time before loop (ms): " << pre_loop_ms << "\n";
   
   return 0;
 }

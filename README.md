@@ -22,5 +22,5 @@ To run it on cpu simply got to `/sequential_kmeans` and use `make` and run:
 ```
 ## Algorith comparison
 For an input of size 1000000 x 30 and K = 300 the running times where:
- - Cpu - 949.3460s
- - Gpu - 29.34938s
+ - Cpu - 949.3460s with input loading time of 1.3776s
+ - Gpu - 29.34938s with imput loading time of 3417.24s
