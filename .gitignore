@@ -1,0 +1,15 @@
+*.o
+*.out
+*.exe
+*.bin
+*.txt
+*.csv
+*.json
+*.xml
+*.yaml
+*.yml
+*.jsonl
+*.jsonl.gz
+*.jsonl.bz2
+*.jsonl.xz
+*.d

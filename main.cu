@@ -1,6 +1,6 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-#include "kmeans.h"
+#include "kmeans_cuda.h"
 #include <cstdio>
 #include <cfloat>
 #include <algorithm>
@@ -41,27 +41,38 @@ static bool loadAsciiPoints(const std::string& path, std::vector<float>& points,
   std::vector<float> data;
   int dim = -1;
   int count = 0;
+
   while (std::getline(in, line)) {
     if (line.empty()) continue;
+
     std::istringstream iss(line);
     int id;
     if (!(iss >> id)) continue;
+
     std::vector<float> coords;
     float v;
+
     while (iss >> v) coords.push_back(v);
+
     if (coords.empty()) continue;
+
     if (dim == -1) dim = static_cast<int>(coords.size());
+
     if (static_cast<int>(coords.size()) != dim) {
       std::cerr << "Inconsistent dimensionality in ASCII input\n";
       return false;
     }
+
     data.insert(data.end(), coords.begin(), coords.end());
     ++count;
   }
+
   if (dim <= 0 || count <= 0) return false;
+
   points.swap(data);
   N = count;
   D = dim;
+
   return true;
 }
 
@@ -77,10 +88,12 @@ int main(int argc, char** argv) {
   const int maxIters = 1000; // safety cap
 
   std::vector<float> h_points;
+
   if (!opts.inputFile.empty()) {
     bool ok = loadAsciiPoints(opts.inputFile, h_points, N, D);
     if (!ok) {
       std::cerr << "Failed to load ASCII input file: " << opts.inputFile << "\n";
+
       return 1;
     }
   } else {
@@ -90,6 +103,7 @@ int main(int argc, char** argv) {
     std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
     for (int i = 0; i < N * D; ++i) h_points[i] = dist01(rng);
   }
+
   if (K <= 1 || K > N) {
     std::cerr << "Invalid K: " << K << " for N=" << N << "\n";
     return 1;
@@ -104,7 +118,6 @@ int main(int argc, char** argv) {
 
   run_atomic_kmeans(h_points, N, D, K, threshold, maxIters, h_centroids);
 
-  // run_reduce_kmeans(h_points, N, D, K, threshold, maxIters, h_centroids);
   std::cout << "Final centroids (K=" << K << ", D=" << D << "):\n";
   for (int k = 0; k < K; ++k) {
     std::cout << "  c" << k << ":";

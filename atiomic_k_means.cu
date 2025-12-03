@@ -117,10 +117,6 @@ void run_atomic_kmeans(const std::vector<float>& h_points,
   std::vector<int> h_assignments(N);
 
   checkCudaErrors(cudaMemcpy(h_centroids.data(), d_centroids, static_cast<size_t>(K) * D * sizeof(float), cudaMemcpyDeviceToHost));
-  checkCudaErrors(cudaMemcpy(h_assignments.data(), d_assign, static_cast<size_t>(N) * sizeof(int), cudaMemcpyDeviceToHost));
-  for (int i = 0; i < N; ++i) {
-    std::cout << "Assignments[" << i << "] = " << h_assignments[i] << " ";
-  }
   std::cout << std::endl;
 
   cudaFree(d_points);
