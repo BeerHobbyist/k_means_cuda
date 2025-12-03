@@ -97,11 +97,8 @@ int main(int argc, char** argv) {
       return 1;
     }
   } else {
-    // Host: generate random points in [0, 1)
-    h_points.resize(static_cast<size_t>(N) * D);
-    std::mt19937 rng(42);
-    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
-    for (int i = 0; i < N * D; ++i) h_points[i] = dist01(rng);
+    cout << "No input file provided, returning 1" << endl;
+    return 1;
   }
 
   if (K <= 1 || K > N) {
