@@ -13,3 +13,5 @@
 *.jsonl.bz2
 *.jsonl.xz
 *.d
+*.sqlite
+*.nsys-rep
