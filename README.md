@@ -20,3 +20,7 @@ To run it on cpu simply got to `/sequential_kmeans` and use `make` and run:
 ```
 ./seq_main -i <input_file> -n <number_of_clusters>
 ```
+## Algorith comparison
+For an input of size 1000000 x 30 and K = 300 the running times where:
+ - Cpu - 949.3460s
+ - Gpu - 29.34938s
